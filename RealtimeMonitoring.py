@@ -5,17 +5,21 @@ from tkinter import simpledialog
 from PIL import Image, ImageTk, ImageDraw
 import cv2
 import face_recognition
+from twilio.rest import Client
+
 
 class App:
-    MAX_BOOKED_SEATS = 3  # Maximum number of initially booked seats
+    MAX_BOOKED_SEATS = 3
+    TWILIO_SID = 'ACec004b11f65670e2e51f189ed9f5f023'
+    TWILIO_AUTH_TOKEN = 'cda9503865977d5f96eace0f414647c6'
+    TWILIO_PHONE_NUMBER = '+12069664675'
 
     def __init__(self):
         self.main_window = tk.Tk()
         self.main_window.geometry("1200x600+350+100")
         self.main_window.title("Face Recognition Attendance System")
 
-        # Set background image
-        background_image = Image.open("background_image.png")  # Replace with your image file
+        background_image = Image.open("background_image.png")
         background_photo = ImageTk.PhotoImage(background_image)
         self.background_label = tk.Label(self.main_window, image=background_photo)
         self.background_label.image = background_photo
@@ -38,7 +42,7 @@ class App:
         self.frame_count = 0
         self.recognized_set = set()
 
-        self.cap = cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 530)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 424)
 
@@ -75,7 +79,7 @@ class App:
         self.main_window.after(20, self.update_webcam_feed)
 
     def recognize_and_mark_attendance(self, frame):
-        known_face_encodings, known_face_names = self.load_known_faces()
+        known_face_encodings, known_face_names, known_mobile_numbers = self.load_known_faces()
 
         face_locations = face_recognition.face_locations(frame)
         face_encodings = face_recognition.face_encodings(frame, face_locations)
@@ -85,20 +89,22 @@ class App:
         for face_encoding in face_encodings:
             matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
 
-            if True in matches:
-                first_match_index = matches.index(True)
-                recognized_name = known_face_names[first_match_index]
+            for i, match in enumerate(matches):
+                if match:
+                    recognized_name = known_face_names[i]
+                    mobile_number = known_mobile_numbers[i]
 
-                if recognized_name not in self.recognized_set:
-                    self.status_label.config(text=f"Marked attendance: {recognized_name}")
-                    self.log_attendance(recognized_name)
-                    self.recognized_set.add(recognized_name)
+                    if recognized_name not in self.recognized_set:
+                        self.status_label.config(text=f"Marked attendance: {recognized_name}")
+                        self.log_attendance(recognized_name, mobile_number)
+                        self.recognized_set.add(recognized_name)
 
         return recognized_name
 
     def load_known_faces(self):
         known_face_encodings = []
         known_face_names = []
+        known_mobile_numbers = []
 
         for filename in os.listdir(self.db_dir):
             if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
@@ -107,15 +113,37 @@ class App:
                     face_encoding = face_recognition.face_encodings(face_recognition.load_image_file(img_path))[0]
                     known_face_encodings.append(face_encoding)
                     known_face_names.append(os.path.splitext(filename)[0])
+
+                    # Extract mobile number from the filename (assuming it's stored in the filename)
+                    # Change this logic based on your naming convention
+                    mobile_number = filename.split('_')[0]
+                    known_mobile_numbers.append(mobile_number)
                 except IndexError:
                     print(f"Warning: No face found in {filename}")
 
-        return known_face_encodings, known_face_names
+        return known_face_encodings, known_face_names, known_mobile_numbers
 
-    def log_attendance(self, name):
+    def log_attendance(self, name, mobile_number):
         if name != "Unknown":
             with open(self.log_path, 'a') as f:
-                f.write('{},{}\n'.format(name, datetime.datetime.now()))
+                f.write('{}, {}, {}\n'.format(name, mobile_number, datetime.datetime.now()))
+            self.send_sms_notification(name, mobile_number)
+
+    def send_sms_notification(self, name, mobile_number):
+        # Format the mobile number to E.164 format
+        formatted_mobile_number = f"+91{mobile_number}"
+
+        client = Client(App.TWILIO_SID, App.TWILIO_AUTH_TOKEN)
+
+        try:
+            message = client.messages.create(
+                to=formatted_mobile_number,
+                from_=App.TWILIO_PHONE_NUMBER,
+                body=f"Attendance marked for {name} at {datetime.datetime.now()}"
+            )
+            print(f"SMS sent to {formatted_mobile_number}")
+        except Exception as e:
+            print(f"Error sending SMS: {e}")
 
     def overlay_text_on_image(self, pil_image, text):
         draw = ImageDraw.Draw(pil_image)
@@ -140,7 +168,8 @@ class App:
 
     def capture_image_and_save(self, name, mobile_number):
         ret, frame = self.cap.read()
-        img_path = os.path.join(self.db_dir, f'{name}.jpg')
+        # Adjust filename logic
+        img_path = os.path.join(self.db_dir, f'{mobile_number}_{name}.jpg')
         cv2.imwrite(img_path, frame)
         with open(self.log_path, 'a') as f:
             f.write('{}, {}, {}\n'.format(name, mobile_number, datetime.datetime.now()))
@@ -155,19 +184,19 @@ class RegisterUserWindow(tk.Toplevel):
         self.title("Register New User")
 
         self.name_label = tk.Label(self, text="Enter Name:")
-        self.name_label.pack(pady=10)
+        self.name_label.pack(pady=20)
 
         self.name_entry = tk.Entry(self)
-        self.name_entry.pack(pady=10)
+        self.name_entry.pack(pady=20)
 
         self.mobile_label = tk.Label(self, text="Enter Mobile Number:")
-        self.mobile_label.pack(pady=10)
+        self.mobile_label.pack(pady=20)
 
         self.mobile_entry = tk.Entry(self)
-        self.mobile_entry.pack(pady=10)
+        self.mobile_entry.pack(pady=20)
 
         self.register_button = tk.Button(self, text="Register", command=self.register_user)
-        self.register_button.pack(pady=10)
+        self.register_button.pack(pady=20)
 
     def register_user(self):
         name = self.name_entry.get()
@@ -177,6 +206,7 @@ class RegisterUserWindow(tk.Toplevel):
             app.registered_users_count += 1
             msg = "Your seat is booked!" if app.registered_users_count <= App.MAX_BOOKED_SEATS else "Your seat is waiting. We have reached the maximum booked seats."
             simpledialog.messagebox.showinfo("Registration Message", msg)
+            app.log_attendance(name, mobile_number)
             self.destroy()
 
 if __name__ == "__main__":
