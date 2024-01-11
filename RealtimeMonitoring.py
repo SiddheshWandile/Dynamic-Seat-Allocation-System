@@ -7,7 +7,6 @@ import cv2
 import face_recognition
 from twilio.rest import Client
 
-
 class App:
     MAX_BOOKED_SEATS = 3
     TWILIO_SID = 'ACec004b11f65670e2e51f189ed9f5f023'
@@ -112,12 +111,15 @@ class App:
                 try:
                     face_encoding = face_recognition.face_encodings(face_recognition.load_image_file(img_path))[0]
                     known_face_encodings.append(face_encoding)
-                    known_face_names.append(os.path.splitext(filename)[0])
 
-                    # Extract mobile number from the filename (assuming it's stored in the filename)
-                    # Change this logic based on your naming convention
-                    mobile_number = filename.split('_')[0]
+                    mobile_number = os.path.splitext(filename)[0]
                     known_mobile_numbers.append(mobile_number)
+
+                    with open(os.path.join(self.db_dir, f'{mobile_number}.txt')) as user_info_file:
+                        for line in user_info_file:
+                            if line.startswith('Name:'):
+                                known_face_names.append(line.split(': ')[1].strip())
+                                break
                 except IndexError:
                     print(f"Warning: No face found in {filename}")
 
@@ -130,7 +132,6 @@ class App:
             self.send_sms_notification(name, mobile_number)
 
     def send_sms_notification(self, name, mobile_number):
-        # Format the mobile number to E.164 format
         formatted_mobile_number = f"+91{mobile_number}"
 
         client = Client(App.TWILIO_SID, App.TWILIO_AUTH_TOKEN)
@@ -168,9 +169,13 @@ class App:
 
     def capture_image_and_save(self, name, mobile_number):
         ret, frame = self.cap.read()
-        # Adjust filename logic
-        img_path = os.path.join(self.db_dir, f'{mobile_number}_{name}.jpg')
+        img_path = os.path.join(self.db_dir, f'{name}.jpg')
         cv2.imwrite(img_path, frame)
+        user_info_path = os.path.join(self.db_dir, f'{name}.txt')
+        with open(user_info_path, 'w') as user_info_file:
+            user_info_file.write('Name: {}\n'.format(name))
+            user_info_file.write('Mobile Number: {}\n'.format(mobile_number))
+            user_info_file.write('Timestamp: {}\n'.format(datetime.datetime.now()))
         with open(self.log_path, 'a') as f:
             f.write('{}, {}, {}\n'.format(name, mobile_number, datetime.datetime.now()))
 
@@ -180,23 +185,23 @@ class App:
 class RegisterUserWindow(tk.Toplevel):
     def __init__(self, master=None):
         super().__init__(master)
-        self.geometry("500x300+500+200")
+        self.geometry("300x250+300+150")
         self.title("Register New User")
 
         self.name_label = tk.Label(self, text="Enter Name:")
-        self.name_label.pack(pady=20)
+        self.name_label.pack(pady=10)
 
         self.name_entry = tk.Entry(self)
-        self.name_entry.pack(pady=20)
+        self.name_entry.pack(pady=10)
 
         self.mobile_label = tk.Label(self, text="Enter Mobile Number:")
-        self.mobile_label.pack(pady=20)
+        self.mobile_label.pack(pady=10)
 
         self.mobile_entry = tk.Entry(self)
-        self.mobile_entry.pack(pady=20)
+        self.mobile_entry.pack(pady=10)
 
         self.register_button = tk.Button(self, text="Register", command=self.register_user)
-        self.register_button.pack(pady=20)
+        self.register_button.pack(pady=10)
 
     def register_user(self):
         name = self.name_entry.get()
