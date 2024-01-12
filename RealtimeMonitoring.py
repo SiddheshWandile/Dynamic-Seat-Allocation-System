@@ -1,11 +1,15 @@
 import os.path
 import datetime
 import tkinter as tk
-from tkinter import simpledialog
+from tkinter import simpledialog, messagebox
 from PIL import Image, ImageTk, ImageDraw
 import cv2
-import face_recognition
+import face_recognition  # Add this line
 from twilio.rest import Client
+import qrcode
+import numpy as np
+from pyzbar.pyzbar import decode
+
 
 class App:
     MAX_BOOKED_SEATS = 3
@@ -34,6 +38,10 @@ class App:
         if not os.path.exists(self.db_dir):
             os.mkdir(self.db_dir)
 
+        self.qr_codes_dir = './qr_codes'
+        if not os.path.exists(self.qr_codes_dir):
+            os.mkdir(self.qr_codes_dir)
+
         self.log_path = './log.txt'
 
         self.face_recognition_active = False
@@ -56,6 +64,10 @@ class App:
         self.take_attendance_button_main_window = self.get_button(self.main_window, 'Take Attendance', 'green',
                                                                    self.toggle_continuous_recognition, fg='black', width=30, height=3)
         self.take_attendance_button_main_window.place(x=950, y=450)
+
+        self.scan_qr_code_button_main_window = self.get_button(self.main_window, 'Scan QR Code', 'blue',
+                                                        self.scan_qr_code, fg='black', width=30, height=3)
+        self.scan_qr_code_button_main_window.place(x=850, y=380)
 
     def update_webcam_feed(self):
         ret, frame = self.cap.read()
@@ -165,7 +177,114 @@ class App:
         return tk.Button(window, text=text, bg=bg, command=command, fg=fg, width=width, height=height)
 
     def register_new_user(self):
-        self.register_window = RegisterUserWindow(self.main_window)
+        name = simpledialog.askstring("Register New User", "Enter the user's name:")
+        if name:
+            mobile_number = simpledialog.askstring("Register New User", "Enter the user's mobile number:")
+            if mobile_number:
+                self.capture_image_and_save(name, mobile_number)
+                qr_code = self.generate_qr_code(name, mobile_number)
+                self.show_qr_code_window(qr_code)
+                self.registered_users_count += 1
+                msg = "Your seat is booked!" if self.registered_users_count <= App.MAX_BOOKED_SEATS else "Your seat is waiting. We have reached the maximum booked seats."
+                simpledialog.messagebox.showinfo("Registration Message", msg)
+                self.log_attendance(name, mobile_number)
+
+    def scan_qr_code(self):
+        ret, frame = self.cap.read()
+        qr_code_data, bbox, qr_code_frame = self.detect_qr_code(frame)
+
+        if qr_code_data:
+            recognized_name = self.recognize_user_from_qr_code(qr_code_data)
+            if recognized_name:
+                self.status_label.config(text=f"Scanned QR Code: {recognized_name}")
+            else:
+                self.status_label.config(text="User not recognized")
+        else:
+            self.status_label.config(text="QR Code not detected")
+
+        imgtk = ImageTk.PhotoImage(image=Image.fromarray(qr_code_frame))
+        self.webcam_label.imgtk = imgtk
+        self.webcam_label.configure(image=imgtk)
+
+        self.main_window.after(20, self.scan_qr_code)  # Continue scanning
+
+
+    def recognize_user_from_qr_code(self, qr_code_data):
+        known_face_names, known_mobile_numbers = self.load_known_users()
+
+        for i, mobile_number in enumerate(known_mobile_numbers):
+            if f"Mobile Number: {mobile_number}" == qr_code_data:
+                recognized_name = known_face_names[i]
+                mobile_number = known_mobile_numbers[i]
+
+                if recognized_name not in self.recognized_set:
+                    self.status_label.config(text=f"Marked attendance: {recognized_name}")
+                    self.log_attendance(recognized_name, mobile_number)
+                    self.recognized_set.add(recognized_name)
+
+                return recognized_name
+
+        return None
+
+    def load_known_users(self):
+        known_face_names = []
+        known_mobile_numbers = []
+
+        for filename in os.listdir(self.db_dir):
+            if filename.lower().endswith('.txt'):
+                user_info_path = os.path.join(self.db_dir, filename)
+                with open(user_info_path, 'r') as user_info_file:
+                    for line in user_info_file:
+                        if line.startswith('Name:'):
+                            known_face_names.append(line.split(': ')[1].strip())
+                        elif line.startswith('Mobile Number:'):
+                            known_mobile_numbers.append(line.split(': ')[1].strip())
+
+        return known_face_names, known_mobile_numbers
+
+    def detect_qr_code(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Use pyzbar to detect QR codes
+        decoded_objects = decode(frame)
+
+        for obj in decoded_objects:
+            qr_code_data = obj.data.decode('utf-8')
+            bbox = obj.polygon
+
+            # Draw the bounding box around the QR code
+            if len(bbox) == 4:
+                cv2.polylines(frame, [np.array(bbox)], True, (0, 255, 0), 2)
+
+            return qr_code_data, bbox, frame
+
+        return None, None, frame
+
+    def generate_qr_code(self, name, mobile_number):
+        qr_data = f"Mobile Number: {mobile_number}"
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(qr_data)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+        qr_code_image_path = os.path.join(self.qr_codes_dir, f'{name}_{mobile_number}_qr.png')
+        img.save(qr_code_image_path)
+
+        qr_code_image = ImageTk.PhotoImage(Image.open(qr_code_image_path))
+
+        return qr_code_image
+
+    def show_qr_code_window(self, qr_code):
+        qr_code_window = tk.Toplevel(self.main_window)
+        qr_code_window.title("QR Code")
+        qr_label = tk.Label(qr_code_window, image=qr_code)
+        qr_label.image = qr_code
+        qr_label.pack()
 
     def capture_image_and_save(self, name, mobile_number):
         ret, frame = self.cap.read()
@@ -181,38 +300,6 @@ class App:
 
     def start(self):
         self.main_window.mainloop()
-
-class RegisterUserWindow(tk.Toplevel):
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.geometry("300x250+300+150")
-        self.title("Register New User")
-
-        self.name_label = tk.Label(self, text="Enter Name:")
-        self.name_label.pack(pady=10)
-
-        self.name_entry = tk.Entry(self)
-        self.name_entry.pack(pady=10)
-
-        self.mobile_label = tk.Label(self, text="Enter Mobile Number:")
-        self.mobile_label.pack(pady=10)
-
-        self.mobile_entry = tk.Entry(self)
-        self.mobile_entry.pack(pady=10)
-
-        self.register_button = tk.Button(self, text="Register", command=self.register_user)
-        self.register_button.pack(pady=10)
-
-    def register_user(self):
-        name = self.name_entry.get()
-        mobile_number = self.mobile_entry.get()
-        if name and mobile_number:
-            app.capture_image_and_save(name, mobile_number)
-            app.registered_users_count += 1
-            msg = "Your seat is booked!" if app.registered_users_count <= App.MAX_BOOKED_SEATS else "Your seat is waiting. We have reached the maximum booked seats."
-            simpledialog.messagebox.showinfo("Registration Message", msg)
-            app.log_attendance(name, mobile_number)
-            self.destroy()
 
 if __name__ == "__main__":
     app = App()
