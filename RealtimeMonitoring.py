@@ -4,18 +4,51 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox
 from PIL import Image, ImageTk, ImageDraw
 import cv2
-import face_recognition  # Add this line
-from twilio.rest import Client
+import face_recognition
 import qrcode
 import numpy as np
 from pyzbar.pyzbar import decode
 
 
+class RegisterUserWindow:
+    def __init__(self, parent):
+        self.parent = parent
+        self.register_user_window = tk.Toplevel(parent.main_window)
+        self.register_user_window.title("Register New User")
+        self.register_user_window.geometry("300x300")  # Set the desired size
+
+        self.name_label = tk.Label(self.register_user_window, text="Enter the user's name:")
+        self.name_label.pack(pady=10)
+
+        self.name_entry = tk.Entry(self.register_user_window)
+        self.name_entry.pack(pady=10)
+
+        self.mobile_label = tk.Label(self.register_user_window, text="Enter the user's mobile number:")
+        self.mobile_label.pack(pady=10)
+
+        self.mobile_entry = tk.Entry(self.register_user_window)
+        self.mobile_entry.pack(pady=10)
+
+        self.register_button = tk.Button(self.register_user_window, text="Register", command=self.register_user)
+        self.register_button.pack(pady=20)
+
+    def register_user(self):
+        name = self.name_entry.get().strip()
+        mobile_number = self.mobile_entry.get().strip()
+
+        if name and mobile_number:
+            self.app_instance.capture_image_and_save(name, mobile_number)
+            qr_code = self.app_instance.generate_qr_code(name, mobile_number)
+            self.app_instance.show_qr_code_window(qr_code)
+            self.app_instance.registered_users_count += 1
+            msg = "Your seat is booked!" if self.app_instance.registered_users_count <= App.MAX_BOOKED_SEATS else "Your seat is waiting. We have reached the maximum booked seats."
+            simpledialog.messagebox.showinfo("Registration Message", msg)
+            self.app_instance.log_attendance(name, mobile_number)
+            self.window.destroy()
+
+
 class App:
     MAX_BOOKED_SEATS = 3
-    TWILIO_SID = 'ACec004b11f65670e2e51f189ed9f5f023'
-    TWILIO_AUTH_TOKEN = 'cda9503865977d5f96eace0f414647c6'
-    TWILIO_PHONE_NUMBER = '+12069664675'
 
     def __init__(self):
         self.main_window = tk.Tk()
@@ -57,6 +90,8 @@ class App:
 
         self.registered_users_count = 0
 
+        self.register_user_window = None
+
         self.register_new_user_button_main_window = self.get_button(self.main_window, 'Register New User', 'gray',
                                                                     self.register_new_user, fg='black', width=30, height=3)
         self.register_new_user_button_main_window.place(x=700, y=450)
@@ -67,7 +102,10 @@ class App:
 
         self.scan_qr_code_button_main_window = self.get_button(self.main_window, 'Scan QR Code', 'blue',
                                                         self.scan_qr_code, fg='black', width=30, height=3)
-        self.scan_qr_code_button_main_window.place(x=850, y=380)
+        self.scan_qr_code_button_main_window.place(x=950, y=380)
+
+        self.wait_button_main_window = self.get_button(self.main_window, 'Wait', 'orange', self.send_whatsapp_poll, fg='black', width=30, height=3)
+        self.wait_button_main_window.place(x=700, y=380)
 
     def update_webcam_feed(self):
         ret, frame = self.cap.read()
@@ -141,22 +179,6 @@ class App:
         if name != "Unknown":
             with open(self.log_path, 'a') as f:
                 f.write('{}, {}, {}\n'.format(name, mobile_number, datetime.datetime.now()))
-            self.send_sms_notification(name, mobile_number)
-
-    def send_sms_notification(self, name, mobile_number):
-        formatted_mobile_number = f"+91{mobile_number}"
-
-        client = Client(App.TWILIO_SID, App.TWILIO_AUTH_TOKEN)
-
-        try:
-            message = client.messages.create(
-                to=formatted_mobile_number,
-                from_=App.TWILIO_PHONE_NUMBER,
-                body=f"Attendance marked for {name} at {datetime.datetime.now()}"
-            )
-            print(f"SMS sent to {formatted_mobile_number}")
-        except Exception as e:
-            print(f"Error sending SMS: {e}")
 
     def overlay_text_on_image(self, pil_image, text):
         draw = ImageDraw.Draw(pil_image)
@@ -177,17 +199,7 @@ class App:
         return tk.Button(window, text=text, bg=bg, command=command, fg=fg, width=width, height=height)
 
     def register_new_user(self):
-        name = simpledialog.askstring("Register New User", "Enter the user's name:")
-        if name:
-            mobile_number = simpledialog.askstring("Register New User", "Enter the user's mobile number:")
-            if mobile_number:
-                self.capture_image_and_save(name, mobile_number)
-                qr_code = self.generate_qr_code(name, mobile_number)
-                self.show_qr_code_window(qr_code)
-                self.registered_users_count += 1
-                msg = "Your seat is booked!" if self.registered_users_count <= App.MAX_BOOKED_SEATS else "Your seat is waiting. We have reached the maximum booked seats."
-                simpledialog.messagebox.showinfo("Registration Message", msg)
-                self.log_attendance(name, mobile_number)
+        self.register_user_window = RegisterUserWindow(self)
 
     def scan_qr_code(self):
         ret, frame = self.cap.read()
@@ -208,6 +220,21 @@ class App:
 
         self.main_window.after(20, self.scan_qr_code)  # Continue scanning
 
+    def send_whatsapp_poll(self):
+        known_face_names, known_mobile_numbers = self.load_known_users()
+
+        for i, mobile_number in enumerate(known_mobile_numbers):
+            if known_face_names[i] not in self.recognized_set:
+                question = f"Hello {known_face_names[i]}! Can you board a train? (Yes/No)"
+                response = simpledialog.askstring("WhatsApp Poll", question)
+
+                if response and response.lower() == 'yes':
+                    self.recognized_set.add(known_face_names[i])
+                    self.log_attendance(known_face_names[i], mobile_number)
+                    self.status_label.config(text=f"Marked attendance: {known_face_names[i]}")
+                    break
+                else:
+                    self.status_label.config(text=f"Skipped: {known_face_names[i]}")
 
     def recognize_user_from_qr_code(self, qr_code_data):
         known_face_names, known_mobile_numbers = self.load_known_users()
@@ -300,6 +327,7 @@ class App:
 
     def start(self):
         self.main_window.mainloop()
+
 
 if __name__ == "__main__":
     app = App()
