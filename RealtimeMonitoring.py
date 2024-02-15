@@ -11,7 +11,7 @@ from pyzbar.pyzbar import decode
 import json
 
 class RegisterUserWindow:
-    def __init__(self, app_instance):
+    def __init__(self, app_instance, is_waiting_list=False):
         self.app_instance = app_instance
         self.parent = app_instance.main_window
         self.register_user_window = tk.Toplevel(self.parent)
@@ -27,19 +27,24 @@ class RegisterUserWindow:
         self.mobile_entry.pack(pady=10)
         self.register_button = tk.Button(self.register_user_window, text="Register", command=self.register_user)
         self.register_button.pack(pady=20)
+        self.is_waiting_list = is_waiting_list
 
     def register_user(self):
         name = self.name_entry.get().strip()
         mobile_number = self.mobile_entry.get().strip()
+
         if name and mobile_number:
             seat_number = self.app_instance.get_next_seat_number()
-            self.app_instance.capture_image_and_save(name, mobile_number, seat_number)
-            qr_code = self.app_instance.generate_qr_code(name, mobile_number)
-            self.app_instance.show_qr_code_window(qr_code)
+            self.app_instance.capture_image_and_save(name, mobile_number, seat_number, self.is_waiting_list)
+
+            if not self.is_waiting_list:
+                qr_code = self.app_instance.generate_qr_code(name, mobile_number)
+                self.app_instance.show_qr_code_window(qr_code)
+
             self.app_instance.registered_users_count += 1
             msg = f"Your seat is booked! Seat No: {seat_number}"
             simpledialog.messagebox.showinfo("Registration Message", msg)
-            self.app_instance.log_attendance(name, mobile_number, seat_number)
+            self.app_instance.log_attendance(name, mobile_number, seat_number, self.is_waiting_list)
             self.register_user_window.destroy()
         else:
             messagebox.showerror("Error", "Please enter both name and mobile number.")
@@ -98,7 +103,7 @@ class App:
         self.take_attendance_button_main_window.place(x=950, y=450)
 
         self.scan_qr_code_button_main_window = self.get_button(self.main_window, 'Scan QR Code', 'blue',
-                                                               self.scan_qr_code, fg='black', width=30, height=3)
+                                                               self.scan_qr_code_method, fg='black', width=30, height=3)
         self.scan_qr_code_button_main_window.place(x=950, y=380)
 
         self.wait_button_main_window = self.get_button(self.main_window, 'Wait', 'orange', self.send_whatsapp_poll,
@@ -124,7 +129,7 @@ class App:
         self.main_window.after(20, self.update_webcam_feed)
 
     def recognize_and_mark_attendance(self, frame):
-        known_face_encodings, known_face_names, known_mobile_numbers = self.load_known_faces()
+        known_face_encodings, known_face_names, known_mobile_numbers, is_waiting_list = self.load_known_faces()
 
         face_locations = face_recognition.face_locations(frame)
         face_encodings = face_recognition.face_encodings(frame, face_locations)
@@ -141,8 +146,11 @@ class App:
 
                     if recognized_name not in self.recognized_set:
                         self.status_label.config(text=f"Marked attendance: {recognized_name}")
-                        self.log_attendance(recognized_name, mobile_number, self.seat_counter)
+                        seat_number = self.get_next_seat_number(is_waiting_list)
+                        self.log_attendance(recognized_name, mobile_number, seat_number, is_waiting_list)
                         self.recognized_set.add(recognized_name)
+
+                    return recognized_name
 
         return recognized_name
 
@@ -150,6 +158,7 @@ class App:
         known_face_encodings = []
         known_face_names = []
         known_mobile_numbers = []
+        is_waiting_list = []
 
         for filename in os.listdir(self.db_dir):
             if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
@@ -165,14 +174,16 @@ class App:
                     with open(user_info_path, 'r') as user_info_file:
                         user_data = json.load(user_info_file)
                         known_face_names.append(user_data["name"])
+                        is_waiting_list.append(user_data.get("is_waiting_list", False))
                 except IndexError:
                     print(f"Warning: No face found in {filename}")
 
-        return known_face_encodings, known_face_names, known_mobile_numbers
+        return known_face_encodings, known_face_names, known_mobile_numbers, is_waiting_list
 
-    def log_attendance(self, name, mobile_number, seat_number):
+    def log_attendance(self, name, mobile_number, seat_number, is_waiting_list=False):
         if name != "Unknown":
-            with open(self.log_path, 'a') as f:
+            log_path = self.log_path if not is_waiting_list else './waiting_list_log.txt'
+            with open(log_path, 'a') as f:
                 f.write('{}, {}, {}, {}\n'.format(name, mobile_number, seat_number, datetime.datetime.now()))
 
     def overlay_text_on_image(self, pil_image, text):
@@ -197,18 +208,20 @@ class App:
         if self.registered_users_count < App.MAX_BOOKED_SEATS:
             self.register_user_window = RegisterUserWindow(self)
         else:
-            messagebox.showinfo("Train Full", "Train is full! No more bookings available.")
+            response = messagebox.askyesno("Train Full", "Train is full! Do you want to book a ticket in waiting?")
+            if response:
+                self.register_user_window = RegisterUserWindow(self, is_waiting_list=True)
+            else:
+                messagebox.showinfo("Train Full", "No more bookings available.")
 
-    def show_waiting_message(self, name):
-        response = messagebox.askquestion("Train Full", f"Train is full! Do you want to book a ticket in waiting, {name}?")
-        if response == 'yes':
-            self.register_user_window = RegisterUserWindow(self)
+    def get_next_seat_number(self, is_waiting_list=False):
+        if not is_waiting_list:
+            self.seat_counter += 1
+            return self.seat_counter
+        else:
+            return -1  # Use a special value for waiting list users
 
-    def get_next_seat_number(self):
-        self.seat_counter += 1
-        return self.seat_counter
-
-    def scan_qr_code(self):
+    def scan_qr_code_method(self):
         ret, frame = self.cap.read()
         qr_code_data, bbox, qr_code_frame = self.detect_qr_code(frame)
 
@@ -225,10 +238,10 @@ class App:
         self.webcam_label.imgtk = imgtk
         self.webcam_label.configure(image=imgtk)
 
-        self.main_window.after(20, self.scan_qr_code)
+        self.main_window.after(20, self.scan_qr_code_method)
 
     def send_whatsapp_poll(self):
-        known_face_names, known_mobile_numbers = self.load_known_users()
+        known_face_names, known_mobile_numbers, is_waiting_list = self.load_known_users()
 
         for i, mobile_number in enumerate(known_mobile_numbers):
             if known_face_names[i] not in self.recognized_set:
@@ -236,16 +249,16 @@ class App:
                 response = simpledialog.askstring("WhatsApp Poll", question)
 
                 if response and response.lower() == 'yes':
-                    seat_number = self.get_next_seat_number()
+                    seat_number = self.get_next_seat_number(is_waiting_list[i])
                     self.recognized_set.add(known_face_names[i])
-                    self.log_attendance(known_face_names[i], mobile_number, seat_number)
+                    self.log_attendance(known_face_names[i], mobile_number, seat_number, is_waiting_list[i])
                     self.status_label.config(text=f"Marked attendance: {known_face_names[i]}, Seat No: {seat_number}")
                     break
                 else:
                     self.status_label.config(text=f"Skipped: {known_face_names[i]}")
 
     def recognize_user_from_qr_code(self, qr_code_data):
-        known_face_names, known_mobile_numbers = self.load_known_users()
+        known_face_names, known_mobile_numbers, is_waiting_list = self.load_known_users()
 
         for i, mobile_number in enumerate(known_mobile_numbers):
             if f"Mobile Number: {mobile_number}" == qr_code_data:
@@ -253,9 +266,9 @@ class App:
                 mobile_number = known_mobile_numbers[i]
 
                 if recognized_name not in self.recognized_set:
-                    seat_number = self.get_next_seat_number()
+                    seat_number = self.get_next_seat_number(is_waiting_list[i])
                     self.status_label.config(text=f"Marked attendance: {recognized_name}, Seat No: {seat_number}")
-                    self.log_attendance(recognized_name, mobile_number, seat_number)
+                    self.log_attendance(recognized_name, mobile_number, seat_number, is_waiting_list[i])
                     self.recognized_set.add(recognized_name)
 
                 return recognized_name
@@ -265,6 +278,7 @@ class App:
     def load_known_users(self):
         known_face_names = []
         known_mobile_numbers = []
+        is_waiting_list = []
 
         for filename in os.listdir(self.db_dir):
             if filename.lower().endswith('.json'):
@@ -273,8 +287,9 @@ class App:
                     user_data = json.load(user_info_file)
                     known_face_names.append(user_data["name"])
                     known_mobile_numbers.append(user_data["mobile_number"])
+                    is_waiting_list.append(user_data.get("is_waiting_list", False))
 
-        return known_face_names, known_mobile_numbers
+        return known_face_names, known_mobile_numbers, is_waiting_list
 
     def detect_qr_code(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -318,21 +333,35 @@ class App:
         qr_label.image = qr_code
         qr_label.pack()
 
-    def capture_image_and_save(self, name, mobile_number, seat_number):
+    def capture_image_and_save(self, name, mobile_number, seat_number, is_waiting_list=False):
         ret, frame = self.cap.read()
         img_path = os.path.join(self.db_dir, f'{name}.jpg')
         cv2.imwrite(img_path, frame)
+
         user_info_path = os.path.join(self.db_dir, f'{name}.json')
+        log_path = self.log_path
+
+        # Check if QR code has already been generated for this user
+        if not os.path.exists(user_info_path):
+            # Generate QR code only for the first-time registration
+            qr_code = self.generate_qr_code(name, mobile_number)
+            self.show_qr_code_window(qr_code)
+
+        if is_waiting_list:
+            log_path = './waiting_list_log.txt'
+
         with open(user_info_path, 'w') as user_info_file:
             user_data = {
                 "name": name,
                 "mobile_number": mobile_number,
                 "seat_number": seat_number,
+                "is_waiting_list": is_waiting_list,
                 "timestamp": str(datetime.datetime.now())
             }
             json.dump(user_data, user_info_file)
-        with open(self.log_path, 'a') as f:
-            f.write('{}, {}, {}, {}\n'.format(name, mobile_number, seat_number, datetime.datetime.now()))
+
+        with open(log_path, 'a') as f:
+            f.write('{}, {}, {}, {}, {}\n'.format(name, mobile_number, seat_number, is_waiting_list, datetime.datetime.now()))
 
     def start(self):
         self.main_window.mainloop()
