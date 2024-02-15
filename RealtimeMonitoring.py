@@ -39,7 +39,7 @@ class RegisterUserWindow:
 
             if not self.is_waiting_list:
                 qr_code = self.app_instance.generate_qr_code(name, mobile_number)
-                self.app_instance.show_qr_code_window(qr_code)
+                # self.app_instance.show_qr_code_window(qr_code)
 
             self.app_instance.registered_users_count += 1
             msg = f"Your seat is booked! Seat No: {seat_number}"
@@ -241,21 +241,7 @@ class App:
         self.main_window.after(20, self.scan_qr_code_method)
 
     def send_whatsapp_poll(self):
-        known_face_names, known_mobile_numbers, is_waiting_list = self.load_known_users()
-
-        for i, mobile_number in enumerate(known_mobile_numbers):
-            if known_face_names[i] not in self.recognized_set:
-                question = f"Hello {known_face_names[i]}! Can you board a train? (Yes/No)"
-                response = simpledialog.askstring("WhatsApp Poll", question)
-
-                if response and response.lower() == 'yes':
-                    seat_number = self.get_next_seat_number(is_waiting_list[i])
-                    self.recognized_set.add(known_face_names[i])
-                    self.log_attendance(known_face_names[i], mobile_number, seat_number, is_waiting_list[i])
-                    self.status_label.config(text=f"Marked attendance: {known_face_names[i]}, Seat No: {seat_number}")
-                    break
-                else:
-                    self.status_label.config(text=f"Skipped: {known_face_names[i]}")
+        pass
 
     def recognize_user_from_qr_code(self, qr_code_data):
         known_face_names, known_mobile_numbers, is_waiting_list = self.load_known_users()
@@ -345,7 +331,7 @@ class App:
         if not os.path.exists(user_info_path):
             # Generate QR code only for the first-time registration
             qr_code = self.generate_qr_code(name, mobile_number)
-            self.show_qr_code_window(qr_code)
+            # self.show_qr_code_window(qr_code)
 
         if is_waiting_list:
             log_path = './waiting_list_log.txt'
