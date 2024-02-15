@@ -39,7 +39,6 @@ class RegisterUserWindow:
 
             if not self.is_waiting_list:
                 qr_code = self.app_instance.generate_qr_code(name, mobile_number)
-                # self.app_instance.show_qr_code_window(qr_code)
 
             self.app_instance.registered_users_count += 1
             msg = f"Your seat is booked! Seat No: {seat_number}"
@@ -78,6 +77,7 @@ class App:
             os.mkdir(self.qr_codes_dir)
 
         self.log_path = './log.txt'
+        self.attendance_status_path = './attendance_status.json'
 
         self.face_recognition_active = False
         self.face_recognition_interval = 5
@@ -146,9 +146,15 @@ class App:
 
                     if recognized_name not in self.recognized_set:
                         self.status_label.config(text=f"Marked attendance: {recognized_name}")
-                        seat_number = self.get_next_seat_number(is_waiting_list)
-                        self.log_attendance(recognized_name, mobile_number, seat_number, is_waiting_list)
+                        seat_number = self.get_next_seat_number(is_waiting_list[i])
+                        self.log_attendance(recognized_name, mobile_number, seat_number, is_waiting_list[i])
                         self.recognized_set.add(recognized_name)
+
+                        # Update attendance status to mark as present
+                        attendance_status = self.load_attendance_status()
+                        attendance_status[recognized_name]["marked_present"] = True
+                        attendance_status[recognized_name]["seat_number"] = seat_number
+                        self.save_attendance_status(attendance_status)
 
                     return recognized_name
 
@@ -184,7 +190,34 @@ class App:
         if name != "Unknown":
             log_path = self.log_path if not is_waiting_list else './waiting_list_log.txt'
             with open(log_path, 'a') as f:
-                f.write('{}, {}, {}, {}\n'.format(name, mobile_number, seat_number, datetime.datetime.now()))
+                f.write('{}, {}, {}, {}\n'.format(name, mobile_number, seat_number, datetime.   datetime.now()))
+
+            # Update attendance status JSON file
+            attendance_status = self.load_attendance_status()
+            if name in attendance_status:
+                if not is_waiting_list and not attendance_status[name]["marked_present"]:
+                    # Set to True only if not in waiting list and not already marked as present
+                    attendance_status[name]["marked_present"] = True
+                    attendance_status[name]["seat_number"] = seat_number
+            else:
+                attendance_status[name] = {"marked_present": False, "seat_number": seat_number}
+            self.save_attendance_status(attendance_status)
+
+    def load_attendance_status(self):
+        if os.path.exists(self.attendance_status_path):
+            with open(self.attendance_status_path, 'r') as json_file:
+                try:
+                    attendance_status = json.load(json_file)
+                except json.decoder.JSONDecodeError:
+                    attendance_status = {}
+        else:
+            attendance_status = {}
+
+        return attendance_status
+
+    def save_attendance_status(self, attendance_status):
+        with open(self.attendance_status_path, 'w') as json_file:
+            json.dump(attendance_status, json_file)
 
     def overlay_text_on_image(self, pil_image, text):
         draw = ImageDraw.Draw(pil_image)
@@ -256,6 +289,12 @@ class App:
                     self.status_label.config(text=f"Marked attendance: {recognized_name}, Seat No: {seat_number}")
                     self.log_attendance(recognized_name, mobile_number, seat_number, is_waiting_list[i])
                     self.recognized_set.add(recognized_name)
+
+                    # Update attendance status to mark as present
+                    attendance_status = self.load_attendance_status()
+                    attendance_status[recognized_name]["marked_present"] = True
+                    attendance_status[recognized_name]["seat_number"] = seat_number
+                    self.save_attendance_status(attendance_status)
 
                 return recognized_name
 
@@ -331,7 +370,6 @@ class App:
         if not os.path.exists(user_info_path):
             # Generate QR code only for the first-time registration
             qr_code = self.generate_qr_code(name, mobile_number)
-            # self.show_qr_code_window(qr_code)
 
         if is_waiting_list:
             log_path = './waiting_list_log.txt'
