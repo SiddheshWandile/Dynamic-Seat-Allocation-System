@@ -146,14 +146,16 @@ class App:
 
                     if recognized_name not in self.recognized_set:
                         self.status_label.config(text=f"Marked attendance: {recognized_name}")
-                        seat_number = self.get_next_seat_number(is_waiting_list[i])
-                        self.log_attendance(recognized_name, mobile_number, seat_number, is_waiting_list[i])
+
+                        # Use existing seat number from attendance status
+                        attendance_status = self.load_attendance_status()
+                        seat_number = attendance_status[recognized_name]["seat_number"]
+
+                        self.log_attendance(recognized_name, mobile_number, seat_number,    is_waiting_list[i])
                         self.recognized_set.add(recognized_name)
 
                         # Update attendance status to mark as present
-                        attendance_status = self.load_attendance_status()
                         attendance_status[recognized_name]["marked_present"] = True
-                        attendance_status[recognized_name]["seat_number"] = seat_number
                         self.save_attendance_status(attendance_status)
 
                     return recognized_name
@@ -190,7 +192,7 @@ class App:
         if name != "Unknown":
             log_path = self.log_path if not is_waiting_list else './waiting_list_log.txt'
             with open(log_path, 'a') as f:
-                f.write('{}, {}, {}, {}\n'.format(name, mobile_number, seat_number, datetime.   datetime.now()))
+                f.write('{}, {}, {}, {}, {}\n'.format(name, mobile_number, seat_number, is_waiting_list, datetime.datetime.now()))
 
             # Update attendance status JSON file
             attendance_status = self.load_attendance_status()
@@ -199,8 +201,9 @@ class App:
                     # Set to True only if not in waiting list and not already marked as present
                     attendance_status[name]["marked_present"] = True
                     attendance_status[name]["seat_number"] = seat_number
+                    attendance_status[name]["is_waiting_list"] = is_waiting_list
             else:
-                attendance_status[name] = {"marked_present": False, "seat_number": seat_number}
+                attendance_status[name] = {"marked_present": False, "seat_number": seat_number, "is_waiting_list": is_waiting_list}
             self.save_attendance_status(attendance_status)
 
     def load_attendance_status(self):
@@ -274,7 +277,49 @@ class App:
         self.main_window.after(20, self.scan_qr_code_method)
 
     def send_whatsapp_poll(self):
-        pass
+        # Load attendance status from the JSON file
+        attendance_status = self.load_attendance_status()
+    
+        # Check for users who are not marked present and not in the waiting list
+        users_to_remove = []
+        for user_name, user_data in attendance_status.items():
+            if not user_data["marked_present"] and not user_data["is_waiting_list"]:
+                # Ask the user if they have boarded the train
+                response = messagebox.askyesno("Boarding Confirmation", f"Have you boarded the train,   {user_name}?")
+    
+                if response:
+                    # If user clicks 'Yes', update the attendance status and display a message
+                    user_data["marked_present"] = True
+                    self.save_attendance_status(attendance_status)
+                    seat_number = user_data["seat_number"]
+                    messagebox.showinfo("Seat Booked", f"Your seat ({seat_number}) is booked,   {user_name}!")
+                    return
+                else:
+                    # Add user data to the list for removal if the user clicks "No"
+                    users_to_remove.append(user_name)
+    
+        # Remove users who clicked "No"
+        for user_name in users_to_remove:
+            # print("Removing user", user_name)
+            del attendance_status[user_name]
+
+        self.save_attendance_status(attendance_status)
+
+        waiting_list_users = [user_name for user_name, user_data in attendance_status.items() if user_data["is_waiting_list"] and user_data["marked_present"]]
+        if waiting_list_users:
+            # Assign the seat to the first waiting list user
+            user_name = waiting_list_users[0]
+            user_data = attendance_status[user_name]
+            user_data["is_waiting_list"] = False
+            self.save_attendance_status(attendance_status)
+
+            # Display a message for waiting list user
+            messagebox.showinfo("Seat Booked", f"Your seat is booked, {user_name}! Seat Number:     {user_data['seat_number']}")
+        
+        else: 
+            # If no waiting list user is present, display a message
+            messagebox.showinfo("No Boarding", "No users have boarded the train or waiting list is empty.")
+
 
     def recognize_user_from_qr_code(self, qr_code_data):
         known_face_names, known_mobile_numbers, is_waiting_list = self.load_known_users()
@@ -294,6 +339,7 @@ class App:
                     attendance_status = self.load_attendance_status()
                     attendance_status[recognized_name]["marked_present"] = True
                     attendance_status[recognized_name]["seat_number"] = seat_number
+                    attendance_status[recognized_name]["is_waiting_list"] = is_waiting_list[i]
                     self.save_attendance_status(attendance_status)
 
                 return recognized_name
@@ -370,9 +416,6 @@ class App:
         if not os.path.exists(user_info_path):
             # Generate QR code only for the first-time registration
             qr_code = self.generate_qr_code(name, mobile_number)
-
-        if is_waiting_list:
-            log_path = './waiting_list_log.txt'
 
         with open(user_info_path, 'w') as user_info_file:
             user_data = {
