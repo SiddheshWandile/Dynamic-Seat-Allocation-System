@@ -35,15 +35,24 @@ class RegisterUserWindow:
 
         if name and mobile_number:
             seat_number = self.app_instance.get_next_seat_number()
+            
             self.app_instance.capture_image_and_save(name, mobile_number, seat_number, self.is_waiting_list)
 
             if not self.is_waiting_list:
                 qr_code = self.app_instance.generate_qr_code(name, mobile_number)
 
             self.app_instance.registered_users_count += 1
-            msg = f"Your seat is booked! Seat No: {seat_number}"
+
+            if not self.is_waiting_list:
+                msg = f"Your seat is booked! Seat No: {seat_number}"
+                self.app_instance.log_attendance(name, mobile_number, seat_number, self.is_waiting_list)
+            else:
+                wating_seat = self.app_instance.get_next_waitseat_number()
+                msg = f"Your are Register in Wating List! Watting Number: {wating_seat}" 
+                self.app_instance.log_attendance(name, mobile_number, wating_seat, self.is_waiting_list)
+
             simpledialog.messagebox.showinfo("Registration Message", msg)
-            self.app_instance.log_attendance(name, mobile_number, seat_number, self.is_waiting_list)
+            
             self.register_user_window.destroy()
         else:
             messagebox.showerror("Error", "Please enter both name and mobile number.")
@@ -111,6 +120,7 @@ class App:
         self.wait_button_main_window.place(x=700, y=380)
 
         self.seat_counter = 0
+        self.wait_counter = 0
 
     def update_webcam_feed(self):
         ret, frame = self.cap.read()
@@ -250,12 +260,15 @@ class App:
             else:
                 messagebox.showinfo("Train Full", "No more bookings available.")
 
-    def get_next_seat_number(self, is_waiting_list=False):
+    def get_next_seat_number(self, is_waiting_list = False):
         if not is_waiting_list:
             self.seat_counter += 1
             return self.seat_counter
-        else:
-            return -1  # Use a special value for waiting list users
+            
+    def get_next_waitseat_number(self, is_waiting_list = True):  
+        if is_waiting_list:
+            self.wait_counter += 1
+            return self.wait_counter
 
     def scan_qr_code_method(self):
         ret, frame = self.cap.read()
