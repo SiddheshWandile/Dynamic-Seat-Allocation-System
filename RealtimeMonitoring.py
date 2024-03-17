@@ -49,7 +49,7 @@ class RegisterUserWindow:
             else:
                 wating_seat = self.app_instance.get_next_waitseat_number()
                 msg = f"Your are Register in Wating List! Watting Number: {wating_seat}" 
-                self.app_instance.log_attendance(name, mobile_number, wating_seat, self.is_waiting_list)
+                self.app_instance.log_attendance(name, mobile_number, -wating_seat, self.is_waiting_list)
 
             simpledialog.messagebox.showinfo("Registration Message", msg)
             
@@ -58,7 +58,7 @@ class RegisterUserWindow:
             messagebox.showerror("Error", "Please enter both name and mobile number.")
 
 class App:
-    MAX_BOOKED_SEATS = 3
+    MAX_BOOKED_SEATS = 1
 
     def __init__(self):
         self.main_window = tk.Tk()
@@ -115,7 +115,7 @@ class App:
                                                                self.scan_qr_code_method, fg='black', width=30, height=3)
         self.scan_qr_code_button_main_window.place(x=950, y=380)
 
-        self.wait_button_main_window = self.get_button(self.main_window, 'Wait', 'orange', self.send_whatsapp_poll,
+        self.wait_button_main_window = self.get_button(self.main_window, 'Status Update', 'orange', self.send_whatsapp_poll,
                                                        fg='black', width=30, height=3)
         self.wait_button_main_window.place(x=700, y=380)
 
@@ -258,8 +258,10 @@ class App:
             if response:
                 self.register_user_window = RegisterUserWindow(self, is_waiting_list=True)
             else:
-                messagebox.showinfo("Train Full", "No more bookings available.")
-
+                response = messagebox.askquestion("Train Full", "No more bookings available. Do you want to go back and try again?")
+                if response == 'yes':
+                    self.register_new_user()  # Call the method to go back and try again
+                
     def get_next_seat_number(self, is_waiting_list = False):
         if not is_waiting_list:
             self.seat_counter += 1
@@ -292,20 +294,21 @@ class App:
     def send_whatsapp_poll(self):
         # Load attendance status from the JSON file
         attendance_status = self.load_attendance_status()
-    
+        seatNum = 0
         # Check for users who are not marked present and not in the waiting list
         users_to_remove = []
         for user_name, user_data in attendance_status.items():
             if not user_data["marked_present"] and not user_data["is_waiting_list"]:
                 # Ask the user if they have boarded the train
-                response = messagebox.askyesno("Boarding Confirmation", f"Have you boarded the train,   {user_name}?")
+                response = messagebox.askyesno("Boarding Confirmation", f"Have you boarded the train, {user_name}?")
+                seatNum = user_data["seat_number"]
     
                 if response:
                     # If user clicks 'Yes', update the attendance status and display a message
                     user_data["marked_present"] = True
                     self.save_attendance_status(attendance_status)
                     seat_number = user_data["seat_number"]
-                    messagebox.showinfo("Seat Booked", f"Your seat ({seat_number}) is booked,   {user_name}!")
+                    messagebox.showinfo("Seat Booked", f"Your seat ({seat_number}) is booked, {user_name}!")
                     return
                 else:
                     # Add user data to the list for removal if the user clicks "No"
@@ -324,10 +327,11 @@ class App:
             user_name = waiting_list_users[0]
             user_data = attendance_status[user_name]
             user_data["is_waiting_list"] = False
+            user_data["seat_number"] = seatNum
             self.save_attendance_status(attendance_status)
 
             # Display a message for waiting list user
-            messagebox.showinfo("Seat Booked", f"Your seat is booked, {user_name}! Seat Number:     {user_data['seat_number']}")
+            messagebox.showinfo("Seat Booked", f"Your seat is booked, {user_name}! Seat Number: {seatNum}")
         
         else: 
             # If no waiting list user is present, display a message
