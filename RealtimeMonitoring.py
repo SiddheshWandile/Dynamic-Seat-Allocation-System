@@ -11,6 +11,7 @@ from pyzbar.pyzbar import decode
 import json
 
 class RegisterUserWindow:
+    MAX_WAITING_LIST_USERS = 2
     def __init__(self, app_instance, is_waiting_list=False):
         self.app_instance = app_instance
         self.parent = app_instance.main_window
@@ -34,6 +35,11 @@ class RegisterUserWindow:
         mobile_number = self.mobile_entry.get().strip()
 
         if name and mobile_number:
+            if self.app_instance.wait_counter >= RegisterUserWindow.MAX_WAITING_LIST_USERS:
+                messagebox.showerror("Train Full", "Train is full! No more bookings available.")
+                self.register_user_window.destroy()
+                return
+
             seat_number = self.app_instance.get_next_seat_number()
             
             self.app_instance.capture_image_and_save(name, mobile_number, seat_number, self.is_waiting_list)
@@ -58,7 +64,7 @@ class RegisterUserWindow:
             messagebox.showerror("Error", "Please enter both name and mobile number.")
 
 class App:
-    MAX_BOOKED_SEATS = 1
+    MAX_BOOKED_SEATS = 2
 
     def __init__(self):
         self.main_window = tk.Tk()
@@ -313,29 +319,53 @@ class App:
                 else:
                     # Add user data to the list for removal if the user clicks "No"
                     users_to_remove.append(user_name)
+                    break
     
-        # Remove users who clicked "No"
-        for user_name in users_to_remove:
-            # print("Removing user", user_name)
-            del attendance_status[user_name]
-
-        self.save_attendance_status(attendance_status)
-
+        wait_del_user = []
         waiting_list_users = [user_name for user_name, user_data in attendance_status.items() if user_data["is_waiting_list"] and user_data["marked_present"]]
         if waiting_list_users:
-            # Assign the seat to the first waiting list user
-            user_name = waiting_list_users[0]
-            user_data = attendance_status[user_name]
-            user_data["is_waiting_list"] = False
-            user_data["seat_number"] = seatNum
-            self.save_attendance_status(attendance_status)
+            # Remove users who clicked "No"
+            if users_to_remove:
+                for user_name in users_to_remove:
+                    del attendance_status[user_name]
+                self.save_attendance_status(attendance_status)
+        
+                # Assign the seat to the first waiting list user
+                user_name = waiting_list_users[0]
+                # print(user_name)
+                user_data = attendance_status[user_name]
+                user_data["is_waiting_list"] = False
+                user_data["seat_number"] = seatNum
+                self.save_attendance_status(attendance_status)
 
-            # Display a message for waiting list user
-            messagebox.showinfo("Seat Booked", f"Your seat is booked, {user_name}! Seat Number: {seatNum}")
+                # Display a message for waiting list user
+                messagebox.showinfo("Seat Booked", f"Your seat is booked, {user_name}! Seat Number: {seatNum}")
+            else:
+                messagebox.showinfo("No Boarding", "No users have boarded the train or waiting list is empty.")
+                for user_name, user_data in attendance_status.items():
+                    if user_data["is_waiting_list"]:
+                        # print("Waiting")
+                        wait_del_user.append(user_name)
+                        
+    
+                for user_name in wait_del_user:
+                    # print("Removing user", user_name)
+                    del attendance_status[user_name]
+                self.save_attendance_status(attendance_status)
         
         else: 
             # If no waiting list user is present, display a message
             messagebox.showinfo("No Boarding", "No users have boarded the train or waiting list is empty.")
+            for user_name, user_data in attendance_status.items():
+                if user_data["is_waiting_list"]:
+                    # print("Waiting")
+                    wait_del_user.append(user_name)
+                    
+
+            for user_name in wait_del_user:
+                # print("Removing user", user_name)
+                del attendance_status[user_name]
+            self.save_attendance_status(attendance_status)
 
 
     def recognize_user_from_qr_code(self, qr_code_data):
